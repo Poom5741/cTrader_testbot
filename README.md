@@ -2,26 +2,6 @@
 
 Welcome to the ultimate collection of trading bots and tools! This repository is packed with various algorithmic trading strategies, from classic technical indicators to advanced machine learning models. Whether you're a seasoned trader or just starting out, there's something here for everyone.
 
-## 🗂 Project Structure
-
-
-.
-├── 3ema.py # Triple EMA Crossover Strategy
-├── WTI_prices.csv # Historical WTI Oil Prices Dataset
-├── cTrader_testbot # cTrader Test Bot
-│ └── LICENSE
-├── cloud_test.py # Ichimoku Cloud Strategy Tester
-├── fisher_test.py # Fisher Transform Indicator Test
-├── fractal.py # Fractal Indicator Implementation
-├── fractal_test.py # Fractal Strategy Tester
-├── high_low.py # High-Low Range Breakout Strategy
-├── realbot_code # Production-Ready Bot Code
-│ ├── cloud_normal_sl # Ichimoku Cloud with Normal Stop Loss
-│ └── cloud_with_atrTPSL # Ichimoku Cloud with ATR-based TP/SL
-├── test # General Test Scripts
-└── yahoo.py # Yahoo Finance Data Fetcher
-text
-
 ## 🚀 Features
 
 - **Multiple Strategies**: From simple moving averages to complex cloud formations, we've got it all!
