@@ -1,0 +1,117 @@
+using System;
+using cAlgo.API;
+using cAlgo.API.Indicators;
+using cAlgo.API.Internals;
+
+namespace cAlgo
+{
+    [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.None)]
+    public class IchimokuCloudStrategy : Robot
+    {
+        [Parameter("Trading Volume (Lots)", DefaultValue = 0.05)]
+        public double TradingVolume { get; set; }
+
+        [Parameter("EMA Period", DefaultValue = 50)]
+        public int EmaPeriod { get; set; }
+
+        [Parameter("Conversion Period", DefaultValue = 9)]
+        public int ConversionPeriod { get; set; }
+
+        [Parameter("Base Period", DefaultValue = 26)]
+        public int BasePeriod { get; set; }
+
+        [Parameter("ATR Period", DefaultValue = 14)]
+        public int AtrPeriod { get; set; }
+
+        [Parer / Symbol.PipSize);
+            var takeProfitPips = (int)Math.Round(atrValue * TpAtrMultiplier / Symbol.PipSize);
+
+            ExecuteMarketOrder(TradeType.Sell, SymbolName, volumeInUnits, "IchimokuCloudStrategy", stopLossPips, takeProfitPips);
+        }
+    }
+}ameter("SL ATR Multiplier", DefaultValue = 2.0)]
+        public double SlAtrMultiplier { get; set; }
+
+        [Parameter("TP ATR Multiplier", DefaultValue = 1.5)]
+        public double TpAtrMultiplier { get; set; }
+
+        [Parameter("ATR Scaling Factor", DefaultValue = 0.1)]
+        public double AtrScalingFactor { get; set; }
+
+        private ExponentialMovingAverage _ema;
+        private AverageTrueRange _atr;
+
+        protected override void OnStart()
+        {
+            _ema = Indicators.ExponentialMovingAverage(Bars.ClosePrices, EmaPeriod);
+            _atr = Indicators.AverageTrueRange(AtrPeriod, MovingAverageType.Simple);
+        }
+
+        protected override void OnBar()
+        {
+            if (Bars.Count < Math.Max(Math.Max(ConversionPeriod, BasePeriod), AtrPeriod) + 1)
+                return;
+
+            if (HasOpenPosition())
+                return;
+
+            var conversionLine = CalculateConversionLine();
+            var baseLine = CalculateBaseLine();
+
+            var signal = GetSignal(conversionLine, baseLine);
+
+            if (signal == 1)
+                OpenLongPosition();
+            else if (signal == -1)
+                OpenShortPosition();
+        }
+
+        private bool HasOpenPosition()
+        {
+            return Positions.Find("IchimokuCloudStrategy", SymbolName) != null;
+        }
+
+        private double CalculateConversionLine()
+        {
+            var high = Bars.HighPrices.Maximum(ConversionPeriod);
+            var low = Bars.LowPrices.Minimum(ConversionPeriod);
+            return (high + low) / 2;
+        }
+
+        private double CalculateBaseLine()
+        {
+            var high = Bars.HighPrices.Maximum(BasePeriod);
+            var low = Bars.LowPrices.Minimum(BasePeriod);
+            return (high + low) / 2;
+        }
+
+        private int GetSignal(double conversionLine, double baseLine)
+        {
+            var close = Bars.ClosePrices.LastValue;
+            var ema = _ema.Result.LastValue;
+
+            if (conversionLine > baseLine && close > ema)
+                return 1;
+            else if (conversionLine < baseLine && close < ema)
+                return -1;
+            else
+                return 0;
+        }
+
+        private void OpenLongPosition()
+        {
+            var volumeInUnits = Symbol.NormalizeVolumeInUnits(TradingVolume, RoundingMode.ToNearest);
+            var atrValue = _atr.Result.LastValue * AtrScalingFactor;
+            
+            var stopLossPips = (int)Math.Round(atrValue * SlAtrMultiplier / Symbol.PipSize);
+            var takeProfitPips = (int)Math.Round(atrValue * TpAtrMultiplier / Symbol.PipSize);
+
+            ExecuteMarketOrder(TradeType.Buy, SymbolName, volumeInUnits, "IchimokuCloudStrategy", stopLossPips, takeProfitPips);
+        }
+
+        private void OpenShortPosition()
+        {
+            var volumeInUnits = Symbol.NormalizeVolumeInUnits(TradingVolume, RoundingMode.ToNearest);
+            var atrValue = _atr.Result.LastValue * AtrScalingFactor;
+            
+            var stopLossPips = (int)Math.Round(atrValue * SlAtrMultipli
