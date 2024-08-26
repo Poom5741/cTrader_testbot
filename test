@@ -1,0 +1,17 @@
+.
+├── 3ema.py
+├── WTI_prices.csv
+├── cTrader_testbot
+│   └── LICENSE
+├── cloud_test.py
+├── fisher_test.py
+├── fractal.py
+├── fractal_test.py
+├── high_low.py
+├── realbot_code
+│   ├── cloud_normal_sl
+│   └── cloud_with_atrTPSL
+├── test
+└── yahoo.py
+
+3 directories, 12 files

@@ -23,13 +23,7 @@ namespace cAlgo
         [Parameter("ATR Period", DefaultValue = 14)]
         public int AtrPeriod { get; set; }
 
-        [Parer / Symbol.PipSize);
-            var takeProfitPips = (int)Math.Round(atrValue * TpAtrMultiplier / Symbol.PipSize);
-
-            ExecuteMarketOrder(TradeType.Sell, SymbolName, volumeInUnits, "IchimokuCloudStrategy", stopLossPips, takeProfitPips);
-        }
-    }
-}ameter("SL ATR Multiplier", DefaultValue = 2.0)]
+        [Parameter("SL ATR Multiplier", DefaultValue = 2.0)]
         public double SlAtrMultiplier { get; set; }
 
         [Parameter("TP ATR Multiplier", DefaultValue = 1.5)]
@@ -52,23 +46,40 @@ namespace cAlgo
             if (Bars.Count < Math.Max(Math.Max(ConversionPeriod, BasePeriod), AtrPeriod) + 1)
                 return;
 
-            if (HasOpenPosition())
-                return;
-
             var conversionLine = CalculateConversionLine();
             var baseLine = CalculateBaseLine();
 
             var signal = GetSignal(conversionLine, baseLine);
 
-            if (signal == 1)
-                OpenLongPosition();
-            else if (signal == -1)
-                OpenShortPosition();
+            if (HasOpenPosition())
+            {
+                ManageOpenPosition(signal);
+            }
+            else
+            {
+                if (signal == 1)
+                    OpenLongPosition();
+                else if (signal == -1)
+                    OpenShortPosition();
+            }
         }
 
         private bool HasOpenPosition()
         {
             return Positions.Find("IchimokuCloudStrategy", SymbolName) != null;
+        }
+
+        private void ManageOpenPosition(int currentSignal)
+        {
+            var position = Positions.Find("IchimokuCloudStrategy", SymbolName);
+            if (position == null)
+                return;
+
+            if ((position.TradeType == TradeType.Buy && currentSignal == -1) ||
+                (position.TradeType == TradeType.Sell && currentSignal == 1))
+            {
+                ClosePosition(position);
+            }
         }
 
         private double CalculateConversionLine()
@@ -114,4 +125,10 @@ namespace cAlgo
             var volumeInUnits = Symbol.NormalizeVolumeInUnits(TradingVolume, RoundingMode.ToNearest);
             var atrValue = _atr.Result.LastValue * AtrScalingFactor;
             
-            var stopLossPips = (int)Math.Round(atrValue * SlAtrMultipli
+            var stopLossPips = (int)Math.Round(atrValue * SlAtrMultiplier / Symbol.PipSize);
+            var takeProfitPips = (int)Math.Round(atrValue * TpAtrMultiplier / Symbol.PipSize);
+
+            ExecuteMarketOrder(TradeType.Sell, SymbolName, volumeInUnits, "IchimokuCloudStrategy", stopLossPips, takeProfitPips);
+        }
+    }
+}

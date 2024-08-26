@@ -1,162 +1,152 @@
-import yfinance as yf
 import pandas as pd
 import numpy as np
 from scipy.optimize import minimize
-from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import pandas_montecarlo
 
-def fetch_data(symbol, start_date, end_date):
-    data = yf.download(symbol, start=start_date, end=end_date)
-    return data
+class IchimokuCloudStrategy:
+    def __init__(self, trading_volume=0.05, ema_period=50, conversion_period=9,
+                 base_period=26, atr_period=14, sl_atr_multiplier=2.0, tp_atr_multiplier=1.5,
+                 atr_scaling_factor=0.1):
+        self.trading_volume = trading_volume
+        self.ema_period = ema_period
+        self.conversion_period = conversion_period
+        self.base_period = base_period
+        self.atr_period = atr_period
+        self.sl_atr_multiplier = sl_atr_multiplier
+        self.tp_atr_multiplier = tp_atr_multiplier
+        self.atr_scaling_factor = atr_scaling_factor
+        
+        self.data = None
+        self.signals = None
 
-def ichimoku_cloud(data, conversion_period, base_period):
-    high = data['High']
-    low = data['Low']
+    def load_data(self, file_path):
+        self.data = pd.read_csv(file_path)
+        self.data.dropna(inplace=True)  # Drop any rows with NaN values
 
-    conversion_line = (high.rolling(window=conversion_period).max() + low.rolling(window=conversion_period).min()) / 2
-    base_line = (high.rolling(window=base_period).max() + low.rolling(window=base_period).min()) / 2
+    def calculate_indicators(self):
+        self.data['EMA'] = self.data['Close'].ewm(span=self.ema_period, adjust=False).mean()
+        self.data['ATR'] = self.calculate_atr(self.atr_period)
 
-    return pd.DataFrame({
-        'Conversion Line': conversion_line,
-        'Base Line': base_line,
-    })
+    def calculate_atr(self, period):
+        high_low = self.data['High'] - self.data['Low']
+        high_close = np.abs(self.data['High'] - self.data['Close'].shift())
+        low_close = np.abs(self.data['Low'] - self.data['Close'].shift())
+        true_range = pd.DataFrame({
+            'high_low': high_low,
+            'high_close': high_close,
+            'low_close': low_close
+        }).max(axis=1)
+        return true_range.rolling(window=period).mean()
 
-def calculate_signals(data, ichimoku, ema_period, atr_period, sl_multiplier, tp_multiplier):
-    signals = pd.DataFrame(index=data.index)
-    signals['Signal'] = 0
-    signals['SL'] = 0.0
-    signals['TP'] = 0.0
+    def calculate_signals(self):
+        self.signals = pd.DataFrame(index=self.data.index)
+        self.signals['Signal'] = 0
+        self.signals['SL'] = 0.0
+        self.signals['TP'] = 0.0
+        
+        conversion_line = self.calculate_conversion_line()
+        base_line = self.calculate_base_line()
 
-    # Calculate EMA
-    data['EMA'] = data['Close'].ewm(span=ema_period, adjust=False).mean()
+        buy_condition = (conversion_line > base_line) & (self.data['Close'] > self.data['EMA'])
+        sell_condition = (conversion_line < base_line) & (self.data['Close'] < self.data['EMA'])
 
-    # Calculate ATR
-    data['ATR'] = data['High'].sub(data['Low']).rolling(window=atr_period).mean()
+        self.signals.loc[buy_condition, 'Signal'] = 1
+        self.signals.loc[sell_condition, 'Signal'] = -1
 
-    # Buy signal: Conversion Line > Base Line and Close > EMA
-    buy_condition = (ichimoku['Conversion Line'] > ichimoku['Base Line']) & (data['Close'] > data['EMA'])
-    signals.loc[buy_condition, 'Signal'] = 1
+        long_signals = self.signals['Signal'] == 1
+        short_signals = self.signals['Signal'] == -1
 
-    # Sell signal: Conversion Line < Base Line and Close < EMA
-    sell_condition = (ichimoku['Conversion Line'] < ichimoku['Base Line']) & (data['Close'] < data['EMA'])
-    signals.loc[sell_condition, 'Signal'] = -1
+        self.signals.loc[long_signals, 'SL'] = self.data.loc[long_signals, 'Close'] - (self.data.loc[long_signals, 'ATR'] * self.sl_atr_multiplier)
+        self.signals.loc[long_signals, 'TP'] = self.data.loc[long_signals, 'Close'] + (self.data.loc[long_signals, 'ATR'] * self.tp_atr_multiplier)
+        self.signals.loc[short_signals, 'SL'] = self.data.loc[short_signals, 'Close'] + (self.data.loc[short_signals, 'ATR'] * self.sl_atr_multiplier)
+        self.signals.loc[short_signals, 'TP'] = self.data.loc[short_signals, 'Close'] - (self.data.loc[short_signals, 'ATR'] * self.tp_atr_multiplier)
 
-    # Calculate SL and TP
-    long_signals = signals['Signal'] == 1
-    short_signals = signals['Signal'] == -1
+    def calculate_conversion_line(self):
+        high = self.data['High'].rolling(window=self.conversion_period).max()
+        low = self.data['Low'].rolling(window=self.conversion_period).min()
+        return (high + low) / 2
 
-    signals.loc[long_signals, 'SL'] = data.loc[long_signals, 'Close'] - (data.loc[long_signals, 'ATR'] * sl_multiplier)
-    signals.loc[long_signals, 'TP'] = data.loc[long_signals, 'Close'] + (data.loc[long_signals, 'ATR'] * tp_multiplier)
-    signals.loc[short_signals, 'SL'] = data.loc[short_signals, 'Close'] + (data.loc[short_signals, 'ATR'] * sl_multiplier)
-    signals.loc[short_signals, 'TP'] = data.loc[short_signals, 'Close'] - (data.loc[short_signals, 'ATR'] * tp_multiplier)
+    def calculate_base_line(self):
+        high = self.data['High'].rolling(window=self.base_period).max()
+        low = self.data['Low'].rolling(window=self.base_period).min()
+        return (high + low) / 2
 
-    return signals
-
-def calculate_returns(data, signals):
-    returns = pd.Series(index=signals.index)
-    position = 0
-    entry_price = 0
-
-    for i in range(1, len(signals)):
-        if position == 0:
-            if signals['Signal'].iloc[i] == 1:
-                position = 1
-                entry_price = data['Close'].iloc[i]
-            elif signals['Signal'].iloc[i] == -1:
-                position = -1
-                entry_price = data['Close'].iloc[i]
-        elif position == 1:
-            if data['Low'].iloc[i] <= signals['SL'].iloc[i-1]:
-                returns.iloc[i] = (signals['SL'].iloc[i-1] - entry_price) / entry_price
-                position = 0
-            elif data['High'].iloc[i] >= signals['TP'].iloc[i-1]:
-                returns.iloc[i] = (signals['TP'].iloc[i-1] - entry_price) / entry_price
-                position = 0
-            elif signals['Signal'].iloc[i] == -1:
-                returns.iloc[i] = (data['Close'].iloc[i] - entry_price) / entry_price
-                position = -1
-                entry_price = data['Close'].iloc[i]
-        elif position == -1:
-            if data['High'].iloc[i] >= signals['SL'].iloc[i-1]:
-                returns.iloc[i] = (entry_price - signals['SL'].iloc[i-1]) / entry_price
-                position = 0
-            elif data['Low'].iloc[i] <= signals['TP'].iloc[i-1]:
-                returns.iloc[i] = (entry_price - signals['TP'].iloc[i-1]) / entry_price
-                position = 0
-            elif signals['Signal'].iloc[i] == 1:
-                returns.iloc[i] = (entry_price - data['Close'].iloc[i]) / entry_price
-                position = 1
-                entry_price = data['Close'].iloc[i]
-
-    return returns.cumsum()
-
-def objective_function(params, data):
-    conversion_period, base_period, ema_period, atr_period, sl_multiplier, tp_multiplier = params
-    
-    # Ensure integer parameters are integers
-    conversion_period = max(1, int(conversion_period))
-    base_period = max(1, int(base_period))
-    ema_period = max(1, int(ema_period))
-    atr_period = max(1, int(atr_period))
-    
-    ichimoku = ichimoku_cloud(data, conversion_period, base_period)
-    signals = calculate_signals(data, ichimoku, ema_period, atr_period, sl_multiplier, tp_multiplier)
-    returns = calculate_returns(data, signals)
-    
-    # If returns are invalid, return a large negative number
-    if returns.iloc[-1] != returns.iloc[-1]:  # Check for NaN
-        return -1000000
-    
-    return -returns.iloc[-1]  # Negative because we want to maximize returns
-
-def optimize_parameters(data):
-    initial_params = [9, 26, 50, 14, 2.0, 1.5]  # Initial guess for parameters
-    bounds = [(5, 30), (20, 60), (10, 200), (5, 30), (0.5, 5), (0.5, 5)]  # Bounds for each parameter
-    
-    result = minimize(
-        objective_function,
-        initial_params,
-        args=(data,),
-        method='L-BFGS-B',
-        bounds=bounds
-    )
-    
-    return result.x
+    def calculate_returns(self):
+        returns = pd.Series(index=self.signals.index)
+        position = 0  # Track if we are in a position (1 for long, -1 for short)
+        entry_price = 0
+        
+        for i in range(1, len(self.signals)):
+            if position == 0:  # No open position
+                if self.signals['Signal'].iloc[i] == 1:  # Buy signal
+                    position = 1
+                    entry_price = self.data['Close'].iloc[i]
+                elif self.signals['Signal'].iloc[i] == -1:  # Sell signal
+                    position = -1
+                    entry_price = self.data['Close'].iloc[i]
+            elif position == 1:  # Long position
+                if self.data['Low'].iloc[i] <= self.signals['SL'].iloc[i-1]:  # Stop loss hit
+                    returns.iloc[i] = (self.signals['SL'].iloc[i-1] - entry_price) / entry_price
+                    position = 0  # Close position
+                elif self.data['High'].iloc[i] >= self.signals['TP'].iloc[i-1]:  # Take profit hit
+                    returns.iloc[i] = (self.signals['TP'].iloc[i-1] - entry_price) / entry_price
+                    position = 0  # Close position
+                elif self.signals['Signal'].iloc[i] == -1:  # New sell signal
+                    returns.iloc[i] = (self.data['Close'].iloc[i] - entry_price) / entry_price
+                    position = -1  # Switch to short position
+                    entry_price = self.data['Close'].iloc[i]
+            elif position == -1:  # Short position
+                if self.data['High'].iloc[i] >= self.signals['SL'].iloc[i-1]:  # Stop loss hit
+                    returns.iloc[i] = (entry_price - self.signals['SL'].iloc[i-1]) / entry_price
+                    position = 0  # Close position
+                elif self.data['Low'].iloc[i] <= self.signals['TP'].iloc[i-1]:  # Take profit hit
+                    returns.iloc[i] = (entry_price - self.signals['TP'].iloc[i-1]) / entry_price
+                    position = 0  # Close position
+                elif self.signals['Signal'].iloc[i] == 1:  # New buy signal
+                    returns.iloc[i] = (entry_price - self.data['Close'].iloc[i]) / entry_price
+                    position = 1  # Switch to long position
+                    entry_price = self.data['Close'].iloc[i]
+        
+        return returns
 
 if __name__ == "__main__":
-    symbol = "SI=F"  # Silver Futures
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=365*2)  # 2 years of data
+    # Load data from local CSV file
+    data = pd.read_csv("./nas100_1h.csv")  # Update the path to your CSV file
     
-    data = fetch_data(symbol, start_date, end_date)
+    # Initialize strategy parameters
+    strategy = IchimokuCloudStrategy()
     
-    # Check for NaN values
-    print("NaN values in data:")
-    print(data.isna().sum())
+    # Load data into the strategy
+    strategy.load_data("./nas100_1h.csv")  # Update the path to your CSV file
     
-    # Remove NaN values
-    data = data.dropna()
-    
-    optimized_params = optimize_parameters(data)
-    
-    print("Optimized Parameters:")
-    print(f"Conversion Period: {int(optimized_params[0])}")
-    print(f"Base Period: {int(optimized_params[1])}")
-    print(f"EMA Period: {int(optimized_params[2])}")
-    print(f"ATR Period: {int(optimized_params[3])}")
-    print(f"SL Multiplier: {optimized_params[4]:.2f}")
-    print(f"TP Multiplier: {optimized_params[5]:.2f}")
-    
-    # Calculate returns with optimized parameters
-    ichimoku = ichimoku_cloud(data, int(optimized_params[0]), int(optimized_params[1]))
-    signals = calculate_signals(data, ichimoku, int(optimized_params[2]), int(optimized_params[3]), optimized_params[4], optimized_params[5])
-    returns = calculate_returns(data, signals)
-    
-    print(f"\nTotal Return: {returns.iloc[-1]:.2%}")
-    
-    # Print some debug information
-    print("\nSignal distribution:")
-    print(signals['Signal'].value_counts())
-    print("\nFirst few rows of signals:")
-    print(signals.head())
-    print("\nLast few rows of signals:")
-    print(signals.tail())
+    # Calculate indicators and signals
+    strategy.calculate_indicators()
+    strategy.calculate_signals()
+
+    # Calculate returns
+    strategy_returns = strategy.calculate_returns()
+
+    # Ensure strategy_returns does not contain NaN values
+    strategy_returns = strategy_returns.dropna()
+
+    print(f"Number of trades: {len(strategy_returns[strategy_returns != 0])}")
+    print(f"Total return: {strategy_returns.sum():.2%}")
+
+    # Run simple Monte Carlo simulation using pandas-montecarlo
+    if not strategy_returns.empty:
+        mc_results = strategy_returns.montecarlo(sims=1000, bust=-0.1, goal=0.5)
+
+        # Print Monte Carlo statistics
+        print("\nMonte Carlo Simulation Results:")
+        print(f"Mean Return: {mc_results.stats['mean']:.2%}")
+        print(f"Median Return: {mc_results.stats['median']:.2%}")
+        print(f"Standard Deviation: {mc_results.stats['std']:.2%}")
+        print(f"Minimum Return: {mc_results.stats['min']:.2%}")
+        print(f"Maximum Return: {mc_results.stats['max']:.2%}")
+
+        # Plot the Monte Carlo simulations
+        mc_results.plot(title="Strategy Returns Monte Carlo Simulations")
+        plt.show()
+    else:
+        print("No valid returns to perform Monte Carlo simulation.")
